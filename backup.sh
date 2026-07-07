@@ -18,35 +18,13 @@ DB_USER=""
 DB_PASS=""
 RCLONE_REMOTE=""
 
-interactive_mode() {
+run_backup_wizard() {
     echo -e "\n\033[1;36m=== INTERACTIVE BACKUP CONFIGURATION ===\033[0m"
     
-    # Check if rclone has any remotes configured
     if ! rclone listremotes 2>/dev/null | grep -q ".*:"; then
         echo -e "\n\033[1;33m[WARN] No cloud storage is currently linked to Rclone!\033[0m"
-        echo "You must connect to Google Drive (or another cloud provider) before configuring backups."
-        echo ""
-        echo "Instructions for Google Drive:"
-        echo " 1. Press 'n' for New remote."
-        echo " 2. Name it 'gdrive'."
-        echo " 3. Choose 'Google Drive'."
-        echo " 4. Leave Client ID/Secret blank."
-        echo " 5. Authenticate via your web browser."
-        echo " 6. Quit wizard when done."
-        echo ""
-        read -p "Do you want to launch the Rclone configuration wizard NOW? (y/n) [y]: " RUN_CONFIG
-        if [[ "${RUN_CONFIG:-y}" =~ ^[Yy]$ ]]; then
-            rclone config
-            
-            if ! rclone listremotes 2>/dev/null | grep -q ".*:"; then
-                echo -e "\033[1;31m[ERROR] Configuration aborted or failed. Exiting.\033[0m"
-                exit 1
-            fi
-            echo -e "\n\033[1;32m[OK] Cloud storage configured successfully! Continuing with backup setup...\033[0m\n"
-        else
-            echo -e "\033[1;31m[ERROR] Cannot proceed without a cloud storage connection. Exiting.\033[0m"
-            exit 1
-        fi
+        echo "Please return to the Main Menu and select Option 2 to configure Google Drive first."
+        return
     fi
     
     read -p "Enter MySQL Username [root]: " INP_USER
@@ -128,7 +106,6 @@ interactive_mode() {
     
     DB_NAME=$(IFS=, ; echo "${SELECTED_DBS[*]}")
     
-    # Pre-fill with the first available remote if possible, else default to gdrive:Backups
     FIRST_REMOTE=$(rclone listremotes 2>/dev/null | head -n 1 | tr -d ':')
     DEFAULT_REMOTE="${FIRST_REMOTE:-gdrive}:Backups"
     
@@ -176,6 +153,90 @@ interactive_mode() {
     if [[ "$RUN_NOW" =~ ^[Nn]$ ]]; then
         exit 0
     fi
+    
+    execute_backup
+    exit 0
+}
+
+interactive_mode() {
+    while true; do
+        echo -e "\n\033[1;36m=== MAIN MENU ===\033[0m"
+        echo " 1) Configure & Run Database Backup"
+        echo " 2) Manage Cloud Storage (Rclone Config)"
+        echo " 3) Exit"
+        echo ""
+        read -p "Select an option [1]: " MENU_OPT
+        MENU_OPT=${MENU_OPT:-1}
+        
+        case $MENU_OPT in
+            1)
+                run_backup_wizard
+                ;;
+            2)
+                rclone config
+                ;;
+            3)
+                echo "Exiting."
+                exit 0
+                ;;
+            *)
+                echo "Invalid option."
+                ;;
+        esac
+    done
+}
+
+execute_backup() {
+    TMP_BKP_DIR="/tmp/mysql_gdrive_backups"
+    mkdir -p "$TMP_BKP_DIR"
+
+    IFS=',' read -ra TARGET_DBS <<< "$DB_NAME"
+
+    for CURRENT_DB in "${TARGET_DBS[@]}"; do
+        CURRENT_DB=$(echo "$CURRENT_DB" | xargs)
+        if [ -z "$CURRENT_DB" ]; then continue; fi
+
+        echo -e "\n=================================================="
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] PROCESSING DATABASE: $CURRENT_DB"
+        
+        TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        FILENAME="${CURRENT_DB}_${TIMESTAMP}.sql.gz"
+        LOCAL_FILE_PATH="${TMP_BKP_DIR}/${FILENAME}"
+
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] Dumping and compressing data..."
+        if [ -z "$DB_PASS" ]; then
+            mysqldump -u "$DB_USER" "$CURRENT_DB" | gzip > "$LOCAL_FILE_PATH"
+        else
+            mysqldump -u "$DB_USER" -p"$DB_PASS" "$CURRENT_DB" 2>/dev/null | gzip > "$LOCAL_FILE_PATH"
+        fi
+
+        if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "[ERROR] Failed to dump database $CURRENT_DB. Skipping to next DB..."
+            rm -f "$LOCAL_FILE_PATH"
+            continue
+        fi
+        echo "[OK] Archive created at: $LOCAL_FILE_PATH"
+
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] Uploading to Google Drive ($RCLONE_REMOTE)..."
+        rclone copy "$LOCAL_FILE_PATH" "$RCLONE_REMOTE"
+
+        if [ $? -ne 0 ]; then
+            echo "[ERROR] Upload failed for $CURRENT_DB. Please check your rclone configuration."
+        else
+            echo "[OK] Upload successful."
+        fi
+
+        rm -f "$LOCAL_FILE_PATH"
+
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] Applying retention policy: Deleting backups older than $KEEP_DAYS days for $CURRENT_DB..."
+        rclone delete "$RCLONE_REMOTE" --min-age ${KEEP_DAYS}d --include "${CURRENT_DB}_*.sql.gz" 2>/dev/null
+        
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] [OK] Completed database: $CURRENT_DB"
+    done
+
+    echo -e "\n=================================================="
+    echo "[OK] ALL REQUESTED DATABASES HAVE BEEN BACKED UP SUCCESSFULLY!"
+    echo "=================================================="
 }
 
 if [ "$#" -eq 0 ]; then
@@ -196,55 +257,5 @@ else
     if [ -z "$DB_NAME" ] || [ -z "$DB_USER" ] || [ -z "$RCLONE_REMOTE" ]; then
         usage
     fi
+    execute_backup
 fi
-
-TMP_BKP_DIR="/tmp/mysql_gdrive_backups"
-mkdir -p "$TMP_BKP_DIR"
-
-IFS=',' read -ra TARGET_DBS <<< "$DB_NAME"
-
-for CURRENT_DB in "${TARGET_DBS[@]}"; do
-    CURRENT_DB=$(echo "$CURRENT_DB" | xargs)
-    if [ -z "$CURRENT_DB" ]; then continue; fi
-
-    echo -e "\n=================================================="
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] PROCESSING DATABASE: $CURRENT_DB"
-    
-    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    FILENAME="${CURRENT_DB}_${TIMESTAMP}.sql.gz"
-    LOCAL_FILE_PATH="${TMP_BKP_DIR}/${FILENAME}"
-
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] Dumping and compressing data..."
-    if [ -z "$DB_PASS" ]; then
-        mysqldump -u "$DB_USER" "$CURRENT_DB" | gzip > "$LOCAL_FILE_PATH"
-    else
-        mysqldump -u "$DB_USER" -p"$DB_PASS" "$CURRENT_DB" 2>/dev/null | gzip > "$LOCAL_FILE_PATH"
-    fi
-
-    if [ ${PIPESTATUS[0]} -ne 0 ]; then
-        echo "[ERROR] Failed to dump database $CURRENT_DB. Skipping to next DB..."
-        rm -f "$LOCAL_FILE_PATH"
-        continue
-    fi
-    echo "[OK] Archive created at: $LOCAL_FILE_PATH"
-
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] Uploading to Google Drive ($RCLONE_REMOTE)..."
-    rclone copy "$LOCAL_FILE_PATH" "$RCLONE_REMOTE"
-
-    if [ $? -ne 0 ]; then
-        echo "[ERROR] Upload failed for $CURRENT_DB. Please check your rclone configuration."
-    else
-        echo "[OK] Upload successful."
-    fi
-
-    rm -f "$LOCAL_FILE_PATH"
-
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [INFO] Applying retention policy: Deleting backups older than $KEEP_DAYS days for $CURRENT_DB..."
-    rclone delete "$RCLONE_REMOTE" --min-age ${KEEP_DAYS}d --include "${CURRENT_DB}_*.sql.gz" 2>/dev/null
-    
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [OK] Completed database: $CURRENT_DB"
-done
-
-echo -e "\n=================================================="
-echo "[OK] ALL REQUESTED DATABASES HAVE BEEN BACKED UP SUCCESSFULLY!"
-echo "=================================================="
