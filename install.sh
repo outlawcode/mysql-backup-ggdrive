@@ -7,15 +7,13 @@ GITHUB_RAW_URL="https://raw.githubusercontent.com/outlawcode/mysql-backup-ggdriv
 
 if ! command -v rclone &> /dev/null; then
     echo "Rclone is not installed. Downloading and installing rclone..."
-    curl -O https://downloads.rclone.org/rclone-current-linux-amd64.zip
-    unzip -q rclone-current-linux-amd64.zip
-    cd rclone-*-linux-amd64
-    sudo cp rclone /usr/bin/
-    sudo chown root:root /usr/bin/rclone
-    sudo chmod 755 /usr/bin/rclone
-    cd ..
-    rm -rf rclone-*-linux-amd64*
-    echo "[OK] Rclone installed successfully."
+    curl https://rclone.org/install.sh | sudo bash
+    if [ $? -eq 0 ]; then
+        echo "[OK] Rclone installed successfully."
+    else
+        echo "[ERROR] Failed to install rclone. Please install it manually."
+        exit 1
+    fi
 else
     echo "[OK] Rclone is already installed."
 fi
