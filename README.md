@@ -16,25 +16,14 @@ curl -sL https://raw.githubusercontent.com/outlawcode/mysql-backup-ggdrive/main/
 ```
 *(After installation, the `mygdrive-backup` command will be available globally)*
 
-## 2. Google Drive Authentication (Rclone Config)
+## 2. Usage
 
-To grant the tool access to your Google Drive, configure rclone once:
-
-```bash
-rclone config
-```
-1. Press `n` for a New remote.
-2. Name it: `gdrive`
-3. Under `Storage`, select Google Drive (usually number `18` or type `drive`).
-4. Leave Client ID / Client Secret empty (press Enter).
-5. Follow the on-screen instructions to get the token and authenticate via your web browser.
-
-## 3. Usage
-
-To run the interactive configuration wizard:
+To run the interactive configuration wizard, simply type:
 ```bash
 mygdrive-backup
 ```
+
+*Note: If you haven't linked your Google Drive yet, the tool will automatically detect this and launch the Google Drive setup wizard for you!*
 
 To run a backup manually via CLI:
 ```bash

@@ -33,5 +33,5 @@ sudo chmod +x /usr/local/bin/mygdrive-backup
 echo "=================================================="
 echo "[OK] Installation completed successfully!"
 echo "You can now use the command: mygdrive-backup"
-echo "Please run 'rclone config' to connect to Google Drive before using the tool."
+echo "Just run 'mygdrive-backup' and the tool will guide you through the setup!"
 echo "=================================================="

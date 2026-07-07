@@ -21,6 +21,34 @@ RCLONE_REMOTE=""
 interactive_mode() {
     echo -e "\n\033[1;36m=== INTERACTIVE BACKUP CONFIGURATION ===\033[0m"
     
+    # Check if rclone has any remotes configured
+    if ! rclone listremotes 2>/dev/null | grep -q ".*:"; then
+        echo -e "\n\033[1;33m[WARN] No cloud storage is currently linked to Rclone!\033[0m"
+        echo "You must connect to Google Drive (or another cloud provider) before configuring backups."
+        echo ""
+        echo "Instructions for Google Drive:"
+        echo " 1. Press 'n' for New remote."
+        echo " 2. Name it 'gdrive'."
+        echo " 3. Choose 'Google Drive'."
+        echo " 4. Leave Client ID/Secret blank."
+        echo " 5. Authenticate via your web browser."
+        echo " 6. Quit wizard when done."
+        echo ""
+        read -p "Do you want to launch the Rclone configuration wizard NOW? (y/n) [y]: " RUN_CONFIG
+        if [[ "${RUN_CONFIG:-y}" =~ ^[Yy]$ ]]; then
+            rclone config
+            
+            if ! rclone listremotes 2>/dev/null | grep -q ".*:"; then
+                echo -e "\033[1;31m[ERROR] Configuration aborted or failed. Exiting.\033[0m"
+                exit 1
+            fi
+            echo -e "\n\033[1;32m[OK] Cloud storage configured successfully! Continuing with backup setup...\033[0m\n"
+        else
+            echo -e "\033[1;31m[ERROR] Cannot proceed without a cloud storage connection. Exiting.\033[0m"
+            exit 1
+        fi
+    fi
+    
     read -p "Enter MySQL Username [root]: " INP_USER
     DB_USER=${INP_USER:-root}
     
@@ -100,9 +128,13 @@ interactive_mode() {
     
     DB_NAME=$(IFS=, ; echo "${SELECTED_DBS[*]}")
     
+    # Pre-fill with the first available remote if possible, else default to gdrive:Backups
+    FIRST_REMOTE=$(rclone listremotes 2>/dev/null | head -n 1 | tr -d ':')
+    DEFAULT_REMOTE="${FIRST_REMOTE:-gdrive}:Backups"
+    
     echo ""
-    read -p "Enter Rclone Remote path (e.g., gdrive:BackupFolder) [gdrive:Backups]: " INP_REMOTE
-    RCLONE_REMOTE=${INP_REMOTE:-gdrive:Backups}
+    read -p "Enter Rclone Remote path (e.g., $FIRST_REMOTE:BackupFolder) [$DEFAULT_REMOTE]: " INP_REMOTE
+    RCLONE_REMOTE=${INP_REMOTE:-$DEFAULT_REMOTE}
     
     read -p "Retention: Keep backups for how many days? [7]: " INP_KEEP
     KEEP_DAYS=${INP_KEEP:-7}
